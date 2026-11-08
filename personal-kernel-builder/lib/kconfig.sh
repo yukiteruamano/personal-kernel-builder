@@ -86,9 +86,9 @@ import_personal_config() {
 # list_unregistered: point at personal kernels in /boot that uninstall does not know about
 list_unregistered() {
 	local kernel release
-	for kernel in /boot/vmlinuz-*; do
+	for kernel in "$BOOT_DIR"/vmlinuz-*; do
 		[[ -f $kernel && ! -L $kernel ]] || continue
-		release=${kernel#/boot/vmlinuz-}
+		release=${kernel#"$BOOT_DIR"/vmlinuz-}
 		valid_release "$release" || continue
 		is_registered "$release" && continue
 		owned_by_package "boot/vmlinuz-$release" && continue
@@ -146,7 +146,7 @@ cmd_diff() {
 	case $target in
 	default) other=$DEFAULT_CFG ;;
 	running)
-		other="/boot/config-$(uname -r)"
+		other="$BOOT_DIR/config-$(uname -r)"
 		if [[ -r /proc/config.gz ]]; then
 			unpacked=$(mktemp)
 			zcat /proc/config.gz >"$unpacked"

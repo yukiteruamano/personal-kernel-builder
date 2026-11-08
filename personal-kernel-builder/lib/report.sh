@@ -97,7 +97,7 @@ cmd_status() {
 		marks=""
 		[[ $release != "$running" ]] || marks+=" [running]"
 		[[ $release != "$top" ]] || marks+=" [default]"
-		[[ -f /boot/vmlinuz-$release ]] || marks+=" [missing in /boot]"
+		[[ -f $BOOT_DIR/vmlinuz-$release ]] || marks+=" [missing in $BOOT_DIR]"
 		echo "    $release$marks"
 	done < <(registered_releases)
 	[[ -n $top ]] || info "GRUB_TOP_LEVEL not set: GRUB boots its own first entry"

@@ -52,6 +52,18 @@ personal-kernel-builder build
 `config olddefconfig` adapts it to the installed `kernel-source` version, and `build`
 replaces its `CONFIG_LOCALVERSION` with `-NAME`.
 
+Settings for this machine in `/etc/personal-kernel-builder/personal-kernel-builder.conf`
+(the packaged defaults are generic):
+
+```
+CRITICAL_OPTIONS=EFI_STUB=y MODULES=y BLK_DEV_NVME=y XFS_FS=y ACPI=y ACPI_EC=y ACPI_AC ACPI_BATTERY POWER_SUPPLY THINKPAD_ACPI TYPEC_UCSI UCSI_ACPI AMD_PMC PINCTRL_AMD MODULE_SIG
+VERIFY_MODULES=thinkpad_acpi ucsi_acpi amd_pmc
+VERIFY_BATTERY=yes
+```
+
+`amd_pmc` only loads when the BIOS sleep state is "Windows and Linux" (s0ix); with S3,
+`verify` skips it.
+
 ## Adding a config
 
 1. Start from a config that boots on the machine, and trim or tune it.
@@ -62,8 +74,19 @@ replaces its `CONFIG_LOCALVERSION` with `-NAME`.
    # Linux/<arch> <version>
    #
    ```
-3. Add a row to the table above. Do not commit hardware dumps (`dmesg`, `lspci -v`,
-   `lsusb -v`): they contain disk UUIDs and device serial numbers.
+3. Add a row to the table above and a section with its hardware and the
+   `CRITICAL_OPTIONS`/`VERIFY_MODULES` it needs. Do not commit hardware dumps (`dmesg`,
+   `lspci -v`, `lsusb -v`): they contain disk UUIDs and device serial numbers.
+
+## Development
+
+```
+make check      # bash -n, shellcheck and the tests
+make help       # every target
+```
+
+`make lint` uses `shellcheck` from `PATH`; without it, `make lint
+SHELLCHECK="uvx --from shellcheck-py shellcheck"`. CI runs `make check` on every push.
 
 ## License
 

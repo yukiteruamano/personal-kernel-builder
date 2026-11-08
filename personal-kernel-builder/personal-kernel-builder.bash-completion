@@ -70,7 +70,7 @@ _personal_kernel_builder() {
 	backup) [[ $prev != backup ]] || _pkb_words "list" ;;
 	restore) [[ $prev != restore ]] || _pkb_words "$(_pkb_backups)" ;;
 	build) _pkb_words "--jobs" ;;
-	install) _pkb_words "--initrd --no-initrd --fix-grub-uuid --dry-run" ;;
+	install) _pkb_words "--initrd --no-initrd --fix-grub-uuid --force --dry-run" ;;
 	uninstall) _pkb_words "--keep --dry-run $(_pkb_releases)" ;;
 	adopt) _pkb_words "--dry-run $(_pkb_boot_releases)" ;;
 	esac

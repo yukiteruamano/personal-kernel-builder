@@ -4,7 +4,7 @@
 set -euo pipefail
 
 PRGNAM=personal-kernel-builder
-VERSION=${VERSION:-1.10}
+VERSION=${VERSION:-1.11}
 BUILD=${BUILD:-1}
 TAG=${TAG:-_pkb}
 PKGTYPE=${PKGTYPE:-txz}
@@ -21,9 +21,9 @@ OUTPUT=${OUTPUT:-/tmp}
 rm -rf -- "$PKG"
 mkdir -p -- "$PKG" "$OUTPUT"
 
-install -Dm0755 "$CWD/$PRGNAM" "$PKG/usr/local/bin/$PRGNAM"
+install -Dm0755 "$CWD/$PRGNAM" "$PKG/usr/bin/$PRGNAM"
 for lib in "$CWD"/lib/*.sh; do
-	install -Dm0644 "$lib" "$PKG/usr/local/lib/$PRGNAM/${lib##*/}"
+	install -Dm0644 "$lib" "$PKG/usr/share/$PRGNAM/${lib##*/}"
 done
 install -Dm0644 "$CWD/$PRGNAM.conf" "$PKG/etc/$PRGNAM/$PRGNAM.conf.new"
 install -Dm0644 "$CWD/$PRGNAM.logrotate" "$PKG/etc/logrotate.d/$PRGNAM.new"

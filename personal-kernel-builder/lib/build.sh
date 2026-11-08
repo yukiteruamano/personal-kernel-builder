@@ -60,8 +60,8 @@ cmd_check() {
 	fi
 	((${#missing[@]} == 0)) || check_failed "missing tools: ${missing[*]}"
 	check_space "$BUILD_ROOT" "$MIN_FREE_BUILD_MB"
-	check_space /boot "$MIN_FREE_BOOT_MB"
-	check_space /lib/modules "$MIN_FREE_MODULES_MB"
+	check_space "$BOOT_DIR" "$MIN_FREE_BOOT_MB"
+	check_space "$MODULES_DIR" "$MIN_FREE_MODULES_MB"
 	grub_preflight
 	[[ -d /sys/firmware/efi ]] || warn "not booted in UEFI mode"
 	info "Release to build: $(expected_release)"

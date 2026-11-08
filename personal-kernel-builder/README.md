@@ -17,8 +17,8 @@ config kept in `/etc/personal-kernel-builder`, and installs it as GRUB's default
 ## Layout
 
 ```
-/usr/local/bin/personal-kernel-builder
-/usr/local/lib/personal-kernel-builder/*.sh
+/usr/bin/personal-kernel-builder
+/usr/share/personal-kernel-builder/*.sh
 /etc/personal-kernel-builder/
   personal-kernel-builder.conf   settings (NAME=, JOBS=, ...)
   default.config                 copy of the config /boot/config points to
@@ -34,9 +34,9 @@ config kept in `/etc/personal-kernel-builder`, and installs it as GRUB's default
 
 ```
 # as root
-installpkg /tmp/personal-kernel-builder-1.10-noarch-1_pkb.txz
-personal-kernel-builder init --name volfread --builder <user> --config seed/config-thinkpad-e14g2
-personal-kernel-builder adopt 7.3.3-e14g2     # older personal kernel, so uninstall can remove it
+installpkg /tmp/personal-kernel-builder-<version>-noarch-1_pkb.txz
+personal-kernel-builder init --name NAME --builder <user> --config seed/<config>
+personal-kernel-builder adopt <release>     # an older personal kernel, so uninstall can remove it
 
 # as <user>
 personal-kernel-builder config olddefconfig
@@ -48,8 +48,26 @@ personal-kernel-builder install
 
 # after rebooting into it
 personal-kernel-builder verify
-su -c 'personal-kernel-builder uninstall 7.3.3-e14g2'   # once the new one boots fine
+su -c 'personal-kernel-builder uninstall <old release>'   # once the new one boots fine
 ```
+
+The packaged `personal-kernel-builder.conf` only requires `EFI_STUB=y MODULES=y MODULE_SIG`.
+Add what your machine cannot boot without to `CRITICAL_OPTIONS`, and the modules `verify`
+should find to `VERIFY_MODULES`: the repository README lists both for each seed config.
+
+## Booting without initrd
+
+With `USE_INITRD=no` (the default) the drivers of the root disk and filesystem must be
+built in: list them as `NAME=y` in `CRITICAL_OPTIONS` (`BLK_DEV_NVME=y XFS_FS=y`, say), and
+set `GRUB_DISABLE_LINUX_UUID=true` (`install --fix-grub-uuid` does it). With `--initrd`,
+`install` runs `mkinitrd` for the filesystem type of `/`, still without a module list.
+
+## Rebuilding the running release
+
+Rebuilding the same sources with the same `NAME` gives the release that is running.
+`install` refuses to replace it: every build signs its modules with a new key, so the
+running kernel could not load any module until the reboot. Boot another kernel first
+(Slackware's stays in GRUB), or pass `--force` and reboot right after `install`.
 
 ## Renaming the kernel
 
@@ -59,15 +77,21 @@ the new one boots, then `uninstall` it.
 
 ## Building the package
 
+From the repository root (the version is `VERSION` in the SlackBuild):
+
 ```
-su -c ./personal-kernel-builder.SlackBuild      # writes /tmp/personal-kernel-builder-1.10-noarch-1_pkb.txz
+su -c 'make package'      # writes /tmp/personal-kernel-builder-<version>-noarch-1_pkb.txz
 ```
+
+Since 1.11 the package installs into `/usr/bin` and `/usr/share/personal-kernel-builder`
+instead of `/usr/local`; `upgradepkg` removes the old files.
 
 ## Tests
 
+From the repository root:
+
 ```
-tests/unit.sh
-tests/completion.sh     # bash completion
+make check      # bash -n, shellcheck, unit and completion tests (make help lists the rest)
 ```
 
 ## Shell completion

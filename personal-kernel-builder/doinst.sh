@@ -1,3 +1,5 @@
+# shellcheck shell=sh
+# Run by installpkg: install the config files, keeping the admin's (the package's then stays as .new)
 config() {
   NEW="$1"
   OLD="$(dirname "$NEW")/$(basename "$NEW" .new)"

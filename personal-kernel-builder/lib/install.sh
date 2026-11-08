@@ -13,12 +13,17 @@ cmd_install() {
 	release=$(<"$SNAPSHOT/release")
 	valid_release "$release" || die "invalid release in the stage: $release"
 	[[ $release == *"-$NAME" ]] || die "staged $release does not end in -$NAME (NAME changed? rebuild)"
+	check_not_running "$release"
 	check_snapshot "$release"
 	grub_preflight
-	check_space /boot "$MIN_FREE_BOOT_MB"
+	check_space "$BOOT_DIR" "$MIN_FREE_BOOT_MB"
 	install_files "$release"
 	if [[ $USE_INITRD == yes ]]; then
 		make_initrd "$release"
+	elif [[ -e $BOOT_DIR/initrd-$release.img ]]; then
+		# GRUB pairs any initrd named like the kernel, even one left by an older install
+		info "Removing the initrd an older install of $release left"
+		remove_initrd "$release"
 	fi
 	register_release "$release" installed
 	keep_build_log "$release"
@@ -42,16 +47,38 @@ find_stage() {
 	[[ -f $STAGE_DIR/release ]] || die "no finished build in $STAGE_DIR: run '$PROG build'"
 }
 
+# check_not_running RELEASE: refuse to replace the running kernel without --force: every
+# build signs its modules with a new key, so the running kernel could not load them
+check_not_running() {
+	[[ $1 == "$(uname -r)" && $FORCE == no ]] || return 0
+	die "$1 is the running kernel: its new modules are signed with a key it does not know, so it could not load any module until you reboot. Boot another kernel first, or pass --force"
+}
+
 # snapshot_stage: copy the user's stage into a root-only directory, so nothing can
-# change it between the checks and the copy into the system
+# change it between the checks and the copy into the system. Files are read with
+# BUILDER's permissions: a hard link to a file only root may read is never copied
 snapshot_stage() {
 	SNAPSHOT=$(mktemp -d "$BUILD_ROOT/pkb-install.XXXXXX")
 	trap 'rm -rf -- "$SNAPSHOT"' EXIT
 	info "Copying $STAGE_DIR to $SNAPSHOT"
-	cp -dR --preserve=timestamps -- "$STAGE_DIR/." "$SNAPSHOT/"
-	[[ $EUID -ne 0 ]] || chown -R root:root "$SNAPSHOT"
-	find "$SNAPSHOT" -mindepth 1 -type d -exec chmod 0755 {} +
-	find "$SNAPSHOT" -type f -exec chmod 0644 {} +
+	local odd path
+	odd=$(find "$STAGE_DIR" -mindepth 1 ! -type f ! -type d -print -quit)
+	[[ -z $odd ]] || die "unexpected symlink or special file in the stage: ${odd#"$STAGE_DIR"/}"
+	local -a reader=(cat --)
+	if [[ $EUID -eq 0 ]]; then
+		reader=(setpriv --reuid="$BUILDER" --regid="$(id -gn -- "$BUILDER")" --init-groups -- cat --)
+	fi
+	# find lists each directory before its contents
+	while IFS= read -r -d '' path; do
+		path=${path#"$STAGE_DIR"/}
+		if [[ -d $STAGE_DIR/$path ]]; then
+			mkdir -m 0755 -- "$SNAPSHOT/$path"
+		else
+			"${reader[@]}" "$STAGE_DIR/$path" >"$SNAPSHOT/$path"
+			chmod 0644 -- "$SNAPSHOT/$path"
+			touch -r "$STAGE_DIR/$path" -- "$SNAPSHOT/$path"
+		fi
+	done < <(find "$STAGE_DIR" -mindepth 1 -print0)
 }
 
 # check_snapshot RELEASE: accept only regular files and directories in the expected places
@@ -76,32 +103,40 @@ check_snapshot() {
 # install_files RELEASE: modules into /lib/modules, kernel files into /boot
 install_files() {
 	local release=$1 file
-	owned_by_package "boot/vmlinuz-$release" && die "/boot/vmlinuz-$release belongs to a Slackware package"
-	[[ $release != "$(uname -r)" ]] || warn "replacing the modules of the running kernel"
-	info "Installing modules into /lib/modules/$release"
-	run rm -rf -- "/lib/modules/$release"
-	run cp -dR --preserve=timestamps -- "$SNAPSHOT/lib/modules/$release" /lib/modules/
+	owned_by_package "boot/vmlinuz-$release" && die "$BOOT_DIR/vmlinuz-$release belongs to a Slackware package"
+	[[ $release != "$(uname -r)" ]] || warn "replacing the modules of the running kernel: it cannot load modules until you reboot"
+	info "Installing modules into $MODULES_DIR/$release"
+	run rm -rf -- "$MODULES_DIR/$release"
+	run cp -dR --preserve=mode,timestamps -- "$SNAPSHOT/lib/modules/$release" "$MODULES_DIR/"
 	run depmod -a "$release"
-	info "Installing kernel files into /boot"
+	info "Installing kernel files into $BOOT_DIR"
 	for file in vmlinuz System.map config; do
-		run cp --preserve=timestamps -- "$SNAPSHOT/boot/$file-$release" /boot/
+		run cp --preserve=mode,timestamps -- "$SNAPSHOT/boot/$file-$release" "$BOOT_DIR/"
 	done
 }
 
 # make_initrd RELEASE: /boot/initrd-RELEASE.img with Slackware's mkinitrd
 make_initrd() {
-	local release=$1 uuid image tree
+	local release=$1 uuid fstype image tree
 	uuid=${ROOT_UUID:-$(findmnt -no UUID /)}
 	[[ -n $uuid ]] || die "could not determine the UUID of /"
+	fstype=$(findmnt -no FSTYPE /)
+	[[ -n $fstype ]] || die "could not determine the filesystem type of /"
 	# GRUB only pairs an initrd named like the kernel: vmlinuz-<release> -> initrd-<release>.img
-	image="/boot/initrd-$release.img"
+	image="$BOOT_DIR/initrd-$release.img"
 	# Own tree: -c wipes it, and /boot/initrd-tree belongs to the generic kernel's initrd
-	tree="/boot/initrd-tree-$release"
+	tree="$BOOT_DIR/initrd-tree-$release"
 	info "Creating $image (root=UUID=$uuid${RESUME_DEV:+, resume=$RESUME_DEV})"
 	local -a resume=()
 	[[ -z $RESUME_DEV ]] || resume=(-h "$RESUME_DEV")
-	# nvme and xfs are built in, so no -m module list is needed
-	run mkinitrd -c -k "$release" -s "$tree" -f xfs -r "UUID=$uuid" "${resume[@]}" -u -o "$image"
+	# No -m module list: the root disk and filesystem drivers must be built in
+	# (list them as NAME=y in CRITICAL_OPTIONS)
+	run mkinitrd -c -k "$release" -s "$tree" -f "$fstype" -r "UUID=$uuid" "${resume[@]}" -u -o "$image"
+}
+
+# remove_initrd RELEASE: delete the initrd of RELEASE and the tree mkinitrd built it from
+remove_initrd() {
+	run rm -rf -- "$BOOT_DIR/initrd-$1.img" "$BOOT_DIR/initrd-tree-$1"
 }
 
 # register_release RELEASE HOW: record RELEASE so uninstall may remove it later
@@ -164,8 +199,8 @@ set_grub_top_level() {
 		set_grub_setting GRUB_DISABLE_LINUX_UUID true
 	fi
 	if [[ -n $1 ]]; then
-		info "Setting GRUB_TOP_LEVEL to /boot/vmlinuz-$1"
-		set_grub_setting GRUB_TOP_LEVEL "/boot/vmlinuz-$1"
+		info "Setting GRUB_TOP_LEVEL to $BOOT_DIR/vmlinuz-$1"
+		set_grub_setting GRUB_TOP_LEVEL "$BOOT_DIR/vmlinuz-$1"
 	else
 		info "Removing GRUB_TOP_LEVEL: GRUB picks the default kernel again"
 		set_grub_setting GRUB_TOP_LEVEL ""
@@ -176,7 +211,7 @@ set_grub_top_level() {
 grub_top_level_release() {
 	local top
 	top=$(grub_setting GRUB_TOP_LEVEL)
-	[[ $top == /boot/vmlinuz-* ]] && echo "${top#/boot/vmlinuz-}"
+	[[ $top == "$BOOT_DIR"/vmlinuz-* ]] && echo "${top#"$BOOT_DIR"/vmlinuz-}"
 	return 0
 }
 
@@ -235,11 +270,11 @@ cmd_uninstall() {
 # remove_release RELEASE: delete the files install puts in /boot and /lib/modules
 remove_release() {
 	local release=$1
-	owned_by_package "boot/vmlinuz-$release" && die "/boot/vmlinuz-$release belongs to a Slackware package"
+	owned_by_package "boot/vmlinuz-$release" && die "$BOOT_DIR/vmlinuz-$release belongs to a Slackware package"
 	info "Removing $release"
-	run rm -f -- "/boot/vmlinuz-$release" "/boot/System.map-$release" "/boot/config-$release" \
-		"/boot/initrd-$release.img"
-	run rm -rf -- "/lib/modules/$release" "/boot/initrd-tree-$release"
+	run rm -f -- "$BOOT_DIR/vmlinuz-$release" "$BOOT_DIR/System.map-$release" "$BOOT_DIR/config-$release"
+	run rm -rf -- "$MODULES_DIR/$release"
+	remove_initrd "$release"
 	run rm -f -- "$STATE_DIR/$release.info"
 }
 
@@ -247,7 +282,7 @@ remove_release() {
 newest_installed() {
 	local release newest=""
 	while read -r release; do
-		[[ ! -f /boot/vmlinuz-$release ]] || newest=$release
+		[[ ! -f $BOOT_DIR/vmlinuz-$release ]] || newest=$release
 	done < <(registered_releases)
 	echo "$newest"
 }
@@ -259,7 +294,7 @@ cmd_adopt() {
 	require_args 1 "adopt <release>"
 	local release=${ARGS[0]}
 	valid_release "$release" || die "invalid release: $release"
-	[[ -f /boot/vmlinuz-$release ]] || die "/boot/vmlinuz-$release not found"
+	[[ -f $BOOT_DIR/vmlinuz-$release ]] || die "$BOOT_DIR/vmlinuz-$release not found"
 	owned_by_package "boot/vmlinuz-$release" && die "$release belongs to a Slackware package"
 	is_registered "$release" && die "$release is already registered"
 	register_release "$release" adopted

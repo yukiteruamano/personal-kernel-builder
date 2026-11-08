@@ -1,6 +1,9 @@
 #!/bin/bash
 # Unit tests: run the library functions against a throwaway directory tree.
 # Usage: tests/unit.sh
+# The tests set variables (ARGS, DRY_RUN, BUILDER...) that the sourced library reads, and
+# replace library functions inside subshells, so shellcheck sees them as never called
+# shellcheck disable=SC2034,SC2153,SC2329
 set -Eeuo pipefail
 
 TEST_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
@@ -16,8 +19,6 @@ source "$LIB_DIR/build.sh"
 source "$LIB_DIR/install.sh"
 # shellcheck source=../lib/report.sh
 source "$LIB_DIR/report.sh"
-# Tests replace check_root_owned inside subshells, so shellcheck sees it as never called
-# shellcheck disable=SC2329
 
 SANDBOX=$(mktemp -d)
 trap 'rm -rf -- "$SANDBOX"' EXIT
@@ -201,7 +202,6 @@ test_create_conf_from_template() {
 	mkdir -p "$SANDBOX/new-etc"
 	printf 'CRITICAL_OPTIONS=MODULE_SIG\n' >"$CONF_FILE.new"
 	# The real install needs root for -o/-g; create_conf calls this stand-in through run
-	# shellcheck disable=SC2329
 	install() { cp -- "${@: -2:1}" "${@: -1}"; }
 	create_conf
 	grep -q '^CRITICAL_OPTIONS=MODULE_SIG$' "$CONF_FILE"
@@ -282,7 +282,7 @@ test_grub_top_level() {
 	KEEP_BACKUPS=1
 	printf 'GRUB_TIMEOUT=5\n#GRUB_TOP_LEVEL="/boot/vmlinuz-old"\n' >"$GRUB_DEFAULTS"
 	set_grub_top_level 7.3.3-volfread
-	equals 7.3.3-volfread "$(grub_top_level_release)"
+	equals 7.3.3-volfread "$(grub_top_level_release)" || return 1
 	set_grub_top_level ""
 	equals "" "$(grub_top_level_release)"
 }
@@ -372,6 +372,135 @@ test_find_stage_open() {
 	find_stage
 }
 fails "find_stage rejects a build directory others can read" test_find_stage_open
+
+# --- install and uninstall ----------------------------------------------------
+# Tests run inside "if", where set -e does not apply: chain assertions with || return 1
+
+# install_sandbox: empty system paths in the sandbox, and stand-ins for the commands
+# install and uninstall run as root
+install_sandbox() {
+	BUILDER=$(id -un)
+	BOOT_DIR=$SANDBOX/boot
+	MODULES_DIR=$SANDBOX/modules
+	STATE_DIR=$SANDBOX/installed
+	LOG_DIR=$SANDBOX/log
+	LOCK_FILE=$SANDBOX/pkb.lock
+	GRUB_CFG=$SANDBOX/grub.cfg
+	USE_INITRD=no
+	rm -rf "$BOOT_DIR" "$MODULES_DIR" "$STATE_DIR"
+	mkdir -p "$BOOT_DIR" "$MODULES_DIR" "$STATE_DIR"
+	printf 'GRUB_TIMEOUT=5\nGRUB_DISABLE_LINUX_UUID=true\n' >"$GRUB_DEFAULTS"
+	require_root() { :; }
+	uname() { echo 7.2.12; }
+	depmod() { :; }
+	grub-mkconfig() {
+		printf '\tlinux\t%s root=/dev/x\n' "$BOOT_DIR/vmlinuz-$STUB_RELEASE" /boot/vmlinuz-generic >"$2"
+	}
+}
+
+# stage_release RELEASE: a finished build of RELEASE by the current user
+stage_release() {
+	STUB_RELEASE=$1
+	local dir file
+	dir=$(work_dir "$BUILDER")
+	rm -rf "$dir/stage"
+	mkdir -p "$dir/stage/boot" "$dir/stage/lib/modules/$1/kernel"
+	chmod 0700 "$dir"
+	touch "$dir/.lock"
+	for file in vmlinuz System.map config; do
+		echo x >"$dir/stage/boot/$file-$1"
+	done
+	echo x >"$dir/stage/lib/modules/$1/kernel/a.ko"
+	echo "$1" >"$dir/stage/release"
+	echo log >"$dir/stage/build.log"
+}
+
+test_install() {
+	install_sandbox
+	stage_release 7.3.3-volfread
+	# Files must be world-readable in /boot and /lib/modules whatever root's umask is
+	umask 077
+	cmd_install || return 1
+	[[ -f $BOOT_DIR/vmlinuz-7.3.3-volfread && -f $MODULES_DIR/7.3.3-volfread/kernel/a.ko ]] || return 1
+	equals 644 "$(stat -c %a "$BOOT_DIR/vmlinuz-7.3.3-volfread")" || return 1
+	equals 7.3.3-volfread "$(grub_top_level_release)" || return 1
+	is_registered 7.3.3-volfread
+}
+ok "install copies the stage into the system and makes it GRUB's default" test_install
+
+test_install_old_initrd() {
+	install_sandbox
+	stage_release 7.3.3-volfread
+	touch "$BOOT_DIR/initrd-7.3.3-volfread.img"
+	mkdir "$BOOT_DIR/initrd-tree-7.3.3-volfread"
+	cmd_install || return 1
+	[[ ! -e $BOOT_DIR/initrd-7.3.3-volfread.img && ! -e $BOOT_DIR/initrd-tree-7.3.3-volfread ]]
+}
+ok "install without initrd removes the one an older install left" test_install_old_initrd
+
+test_install_running() {
+	install_sandbox
+	stage_release 7.3.3-volfread
+	uname() { echo 7.3.3-volfread; }
+	cmd_install
+}
+fails "install refuses to replace the running kernel" test_install_running
+
+test_install_running_forced() {
+	install_sandbox
+	stage_release 7.3.3-volfread
+	uname() { echo 7.3.3-volfread; }
+	FORCE=yes
+	cmd_install || return 1
+	[[ -f $BOOT_DIR/vmlinuz-7.3.3-volfread ]]
+}
+ok "install --force replaces the running kernel" test_install_running_forced
+
+test_install_stage_symlink() {
+	install_sandbox
+	stage_release 7.3.3-volfread
+	echo secret >"$SANDBOX/root-only"
+	ln -s "$SANDBOX/root-only" "$(work_dir "$BUILDER")/stage/lib/modules/7.3.3-volfread/kernel/b.ko"
+	cmd_install
+}
+fails "install rejects a symlink in the user's stage before copying it" test_install_stage_symlink
+
+test_initrd_fstype() {
+	DRY_RUN=yes
+	findmnt() { [[ $* == *UUID* ]] && echo 1234-abcd || echo ext4; }
+	[[ $(make_initrd 7.3.3-volfread) == *" -f ext4 "* ]]
+}
+ok "make_initrd uses the filesystem type of /" test_initrd_fstype
+
+test_uninstall() {
+	install_sandbox
+	stage_release 7.3.3-volfread
+	cmd_install || return 1
+	touch "$BOOT_DIR/initrd-7.3.3-volfread.img"
+	stage_release 7.3.4-volfread
+	cmd_install || return 1
+	[[ -f $BOOT_DIR/vmlinuz-7.3.3-volfread ]] || return 1
+	ARGS=(7.3.3-volfread)
+	cmd_uninstall || return 1
+	[[ ! -e $BOOT_DIR/vmlinuz-7.3.3-volfread && ! -e $BOOT_DIR/initrd-7.3.3-volfread.img ]] || return 1
+	[[ ! -e $MODULES_DIR/7.3.3-volfread && -f $BOOT_DIR/vmlinuz-7.3.4-volfread ]] || return 1
+	is_registered 7.3.3-volfread && return 1
+	equals 7.3.4-volfread "$(grub_top_level_release)"
+}
+ok "uninstall removes kernel files, initrd, modules and registry entry" test_uninstall
+
+test_uninstall_default() {
+	install_sandbox
+	stage_release 7.3.3-volfread
+	cmd_install || return 1
+	stage_release 7.3.4-volfread
+	cmd_install || return 1
+	STUB_RELEASE=7.3.3-volfread
+	ARGS=(7.3.4-volfread)
+	cmd_uninstall || return 1
+	equals 7.3.3-volfread "$(grub_top_level_release)"
+}
+ok "uninstalling GRUB's default makes the newest remaining kernel the default" test_uninstall_default
 
 echo "passed: $PASSED, failed: $FAILED"
 ((FAILED == 0))

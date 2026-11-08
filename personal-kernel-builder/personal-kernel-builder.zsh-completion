@@ -71,7 +71,8 @@ _personal-kernel-builder() {
 			_arguments $common \
 				'(--no-initrd)--initrd[create an initrd]' \
 				'(--initrd)--no-initrd[boot without initrd]' \
-				'--fix-grub-uuid[set GRUB_DISABLE_LINUX_UUID=true]' && ret=0
+				'--fix-grub-uuid[set GRUB_DISABLE_LINUX_UUID=true]' \
+				'--force[replace the running kernel]' && ret=0
 			;;
 		uninstall)
 			_arguments $common \

@@ -10,6 +10,8 @@ BACKUP_DIR=$ETC_DIR/backups
 LOG_DIR=/var/log/personal-kernel-builder
 LOG_FILE=$LOG_DIR/personal-kernel-builder.log
 STATE_DIR=/var/lib/personal-kernel-builder/installed
+BOOT_DIR=/boot
+MODULES_DIR=/lib/modules
 LOCK_FILE=/var/lock/personal-kernel-builder.lock
 GRUB_CFG=/boot/grub/grub.cfg
 GRUB_DEFAULTS=/etc/default/grub
@@ -40,6 +42,7 @@ VERIFY_BATTERY=no
 # Per-run state
 DRY_RUN=no
 FIX_GRUB_UUID=no
+FORCE=no
 KEEP_KERNELS=""
 IMPORT_CONFIG=""
 ARGS=()

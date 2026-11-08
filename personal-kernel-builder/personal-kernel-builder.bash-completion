@@ -1,0 +1,78 @@
+# shellcheck shell=bash
+# Bash completion for personal-kernel-builder.
+
+# _pkb_words WORDS: complete the current word from WORDS
+_pkb_words() {
+	mapfile -t COMPREPLY < <(compgen -W "$1" -- "${COMP_WORDS[COMP_CWORD]}")
+}
+
+# _pkb_backups: backup ids of personal.config, newest first
+_pkb_backups() {
+	local file
+	for file in /etc/personal-kernel-builder/backups/personal-*.config; do
+		[[ -e $file ]] || continue
+		file=${file##*/personal-}
+		echo "${file%.config}"
+	done | sort -r
+}
+
+# _pkb_releases: personal kernels uninstall may remove
+_pkb_releases() {
+	local file
+	for file in /var/lib/personal-kernel-builder/installed/*.info; do
+		[[ -e $file ]] || continue
+		file=${file##*/}
+		echo "${file%.info}"
+	done
+}
+
+# _pkb_boot_releases: kernels in /boot (regular files only, not Slackware's symlinks)
+_pkb_boot_releases() {
+	local file
+	for file in /boot/vmlinuz-*; do
+		[[ -f $file && ! -L $file ]] || continue
+		echo "${file#/boot/vmlinuz-}"
+	done
+}
+
+# _pkb_command: first word after the program name that is not an option or its value
+_pkb_command() {
+	local i word
+	for ((i = 1; i < COMP_CWORD; i++)); do
+		word=${COMP_WORDS[i]}
+		case $word in
+		--name | --builder | --config | --jobs | --keep) ((i++)) ;;
+		-*) ;;
+		*) echo "$word"; return ;;
+		esac
+	done
+}
+
+_personal_kernel_builder() {
+	local cur=${COMP_WORDS[COMP_CWORD]} prev=${COMP_WORDS[COMP_CWORD - 1]} command
+	case $prev in
+	--config) mapfile -t COMPREPLY < <(compgen -f -- "$cur"); return ;;
+	--builder) mapfile -t COMPREPLY < <(compgen -u -- "$cur"); return ;;
+	--name | --jobs | --keep) return ;;
+	esac
+	command=$(_pkb_command)
+	case $command in
+	"")
+		if [[ $cur == -* ]]; then
+			_pkb_words "--dry-run --help"
+		else
+			_pkb_words "init config diff backup restore check build install uninstall adopt verify status"
+		fi
+		;;
+	init) _pkb_words "--name --builder --config --dry-run" ;;
+	config) [[ $prev != config ]] || _pkb_words "olddefconfig menuconfig" ;;
+	diff) [[ $prev != diff ]] || _pkb_words "default running $(_pkb_backups)" ;;
+	backup) [[ $prev != backup ]] || _pkb_words "list" ;;
+	restore) [[ $prev != restore ]] || _pkb_words "$(_pkb_backups)" ;;
+	build) _pkb_words "--jobs" ;;
+	install) _pkb_words "--initrd --no-initrd --fix-grub-uuid --dry-run" ;;
+	uninstall) _pkb_words "--keep --dry-run $(_pkb_releases)" ;;
+	adopt) _pkb_words "--dry-run $(_pkb_boot_releases)" ;;
+	esac
+}
+complete -F _personal_kernel_builder personal-kernel-builder

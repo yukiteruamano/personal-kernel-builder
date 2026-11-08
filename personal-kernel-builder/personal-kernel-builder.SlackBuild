@@ -1,0 +1,42 @@
+#!/bin/bash
+# Slackware build script for personal-kernel-builder (noarch shell tool).
+# Run as root (makepkg records root ownership): ./personal-kernel-builder.SlackBuild
+set -euo pipefail
+
+PRGNAM=personal-kernel-builder
+VERSION=${VERSION:-1.10}
+BUILD=${BUILD:-1}
+TAG=${TAG:-_pkb}
+PKGTYPE=${PKGTYPE:-txz}
+CWD=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
+TMP=${TMP:-/tmp/pkb-slackbuild}
+PKG=$TMP/package-$PRGNAM
+OUTPUT=${OUTPUT:-/tmp}
+
+[[ $EUID -eq 0 ]] || {
+	echo "error: run as root so the package files are owned by root" >&2
+	exit 1
+}
+
+rm -rf -- "$PKG"
+mkdir -p -- "$PKG" "$OUTPUT"
+
+install -Dm0755 "$CWD/$PRGNAM" "$PKG/usr/local/bin/$PRGNAM"
+for lib in "$CWD"/lib/*.sh; do
+	install -Dm0644 "$lib" "$PKG/usr/local/lib/$PRGNAM/${lib##*/}"
+done
+install -Dm0644 "$CWD/$PRGNAM.conf" "$PKG/etc/$PRGNAM/$PRGNAM.conf.new"
+install -Dm0644 "$CWD/$PRGNAM.logrotate" "$PKG/etc/logrotate.d/$PRGNAM.new"
+install -Dm0644 "$CWD/$PRGNAM.bash-completion" \
+	"$PKG/usr/share/bash-completion/completions/$PRGNAM"
+install -Dm0644 "$CWD/$PRGNAM.zsh-completion" "$PKG/usr/share/zsh/site-functions/_$PRGNAM"
+install -d -m0755 "$PKG/var/log/$PRGNAM" "$PKG/var/lib/$PRGNAM/installed"
+
+install -Dm0644 "$CWD/README.md" "$PKG/usr/doc/$PRGNAM-$VERSION/README.md"
+install -Dm0644 "$CWD/$PRGNAM.SlackBuild" "$PKG/usr/doc/$PRGNAM-$VERSION/$PRGNAM.SlackBuild"
+
+install -Dm0644 "$CWD/slack-desc" "$PKG/install/slack-desc"
+install -Dm0644 "$CWD/doinst.sh" "$PKG/install/doinst.sh"
+
+cd "$PKG"
+/sbin/makepkg -l y -c n "$OUTPUT/$PRGNAM-$VERSION-noarch-$BUILD$TAG.$PKGTYPE"

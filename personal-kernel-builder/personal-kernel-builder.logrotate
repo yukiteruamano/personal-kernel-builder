@@ -1,0 +1,7 @@
+/var/log/personal-kernel-builder/personal-kernel-builder.log {
+	monthly
+	rotate 6
+	compress
+	missingok
+	notifempty
+}

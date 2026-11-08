@@ -1,0 +1,115 @@
+#!/bin/bash
+# Build, install and manage a personal kernel on Slackware. The kernel is configured from
+# /etc/personal-kernel-builder/personal.config, compiled without root in a private copy of
+# /usr/src/linux under /tmp, and installed as root as GRUB's default entry.
+#
+# Usage: personal-kernel-builder [options] <command> [args]
+#
+# Commands (root needed where marked):
+#   init                 [root] create /etc/personal-kernel-builder: settings, Slackware's
+#                        default config (/boot/config) and personal config
+#   config olddefconfig  update personal.config for the installed sources
+#   config menuconfig    edit personal.config interactively
+#   diff [TARGET]        personal.config against default (default), running, or a backup id
+#   backup [list]        back up personal.config (kept: KEEP_BACKUPS), or list the backups
+#   restore ID           replace personal.config with backup ID (YYYYmmdd-HHMMSS, or a prefix)
+#   check                sources, config, tools, free space and GRUB settings (read-only)
+#   build                compile personal.config and stage it for install (not as root)
+#   install              [root] install the staged kernel and modules, make it GRUB's default
+#   uninstall RELEASE    [root] remove a registered personal kernel (never the running one)
+#   adopt RELEASE        [root] register a personal kernel installed by other means
+#   verify               check the running kernel: release, modules, battery charging
+#   status               sources, configs, built and installed kernels, GRUB default
+#
+# Options:
+#   --name NAME          init: kernel name, releases end in -NAME (saved as NAME=)
+#   --builder USER       init: user who owns personal.config and builds (saved as BUILDER=;
+#                        default: the user who logged in before su)
+#   --config FILE        init: import FILE as personal.config
+#   --jobs N             build: parallel make jobs (default: JOBS=, 4)
+#   --initrd            install: create an initrd (root=UUID= works)
+#   --no-initrd          install: boot without initrd (needs GRUB_DISABLE_LINUX_UUID=true)
+#   --fix-grub-uuid      install: set GRUB_DISABLE_LINUX_UUID=true in /etc/default/grub
+#   --keep N             uninstall: remove all registered kernels but the newest N
+#   --dry-run            print what init, install, uninstall and adopt would change
+#   -h, --help           show this help
+#
+# Settings: /etc/personal-kernel-builder/personal-kernel-builder.conf (KEY=VALUE).
+# Log: /var/log/personal-kernel-builder/ (runs as root and build logs).
+set -Eeuo pipefail
+
+PROG=personal-kernel-builder
+SCRIPT_DIR=$(dirname -- "$(readlink -f -- "${BASH_SOURCE[0]}")")
+if [[ $SCRIPT_DIR == /usr/local/bin ]]; then
+	LIB_DIR=/usr/local/lib/$PROG
+else
+	LIB_DIR=$SCRIPT_DIR/lib
+fi
+# Builders are not root, and their PATH often lacks depmod and grub-mkconfig
+PATH=$PATH:/sbin:/usr/sbin
+
+# shellcheck source=lib/common.sh
+source "$LIB_DIR/common.sh"
+# shellcheck source=lib/kconfig.sh
+source "$LIB_DIR/kconfig.sh"
+# shellcheck source=lib/build.sh
+source "$LIB_DIR/build.sh"
+# shellcheck source=lib/install.sh
+source "$LIB_DIR/install.sh"
+# shellcheck source=lib/report.sh
+source "$LIB_DIR/report.sh"
+trap 'on_error "$LINENO" "$?"' ERR
+
+# usage: print the header comment as help text
+usage() {
+	sed -n '2,/^set -Eeuo/p' "${BASH_SOURCE[0]}" | sed '$d; s/^# \{0,1\}//'
+}
+
+main() {
+	local command="" cli_name="" cli_builder="" cli_jobs="" cli_initrd=""
+	while (($#)); do
+		case $1 in
+		--name) cli_name=${2:?--name needs a name}; shift ;;
+		--builder) cli_builder=${2:?--builder needs a user name}; shift ;;
+		--config)
+			[[ -f ${2:?--config needs a file} ]] || die "--config: $2 not found"
+			IMPORT_CONFIG=$(realpath -- "$2")
+			shift
+			;;
+		--jobs) cli_jobs=${2:?--jobs needs a number}; shift ;;
+		--initrd) cli_initrd=yes ;;
+		--no-initrd) cli_initrd=no ;;
+		--fix-grub-uuid) FIX_GRUB_UUID=yes ;;
+		--keep) KEEP_KERNELS=${2:?--keep needs a number}; shift ;;
+		--dry-run) DRY_RUN=yes ;;
+		-h | --help) usage; exit 0 ;;
+		-*) usage >&2; die "unknown option: $1" ;;
+		*)
+			if [[ -z $command ]]; then
+				command=$1
+			else
+				ARGS+=("$1")
+			fi
+			;;
+		esac
+		shift
+	done
+	case $command in
+	init | config | diff | backup | restore | check | build | install | uninstall | adopt | verify | status) ;;
+	"") usage >&2; die "no command given" ;;
+	*) die "unknown command: $command (see --help)" ;;
+	esac
+	[[ -z $cli_name || $command == init ]] || die "--name only applies to init (NAME= in $CONF_FILE)"
+	[[ -z $cli_builder || $command == init ]] || die "--builder only applies to init (BUILDER= in $CONF_FILE)"
+	[[ -z $IMPORT_CONFIG || $command == init ]] || die "--config only applies to init"
+	load_conf
+	NAME=${cli_name:-$NAME}
+	BUILDER=${cli_builder:-$BUILDER}
+	JOBS=${cli_jobs:-$JOBS}
+	USE_INITRD=${cli_initrd:-$USE_INITRD}
+	validate_settings
+	start_log "$command"
+	"cmd_$command"
+}
+
+main "$@"

@@ -1,0 +1,89 @@
+#compdef personal-kernel-builder
+# Zsh completion for personal-kernel-builder.
+
+# _pkb_backups: backup ids of personal.config, newest first
+_pkb_backups() {
+	local -a ids
+	ids=(/etc/personal-kernel-builder/backups/personal-*.config(NOn:t:r))
+	ids=(${ids#personal-})
+	_describe -t backups 'backup id' ids
+}
+
+# _pkb_releases: personal kernels uninstall may remove
+_pkb_releases() {
+	local -a releases
+	releases=(/var/lib/personal-kernel-builder/installed/*.info(N:t:r))
+	_describe -t releases 'registered release' releases
+}
+
+# _pkb_boot_releases: kernels in /boot (regular files only, not Slackware's symlinks)
+_pkb_boot_releases() {
+	local -a releases
+	releases=(/boot/vmlinuz-*(N.:t))
+	releases=(${releases#vmlinuz-})
+	_describe -t releases 'kernel release' releases
+}
+
+_personal-kernel-builder() {
+	local curcontext=$curcontext state line ret=1
+	local -a commands
+	commands=(
+		'init:create /etc/personal-kernel-builder and import the configs (root)'
+		'config:run olddefconfig or menuconfig on personal.config'
+		'diff:compare personal.config with the default, running or a backup'
+		'backup:back up personal.config, or list the backups'
+		'restore:replace personal.config with a backup'
+		'check:check sources, config, tools, space and GRUB (read-only)'
+		'build:compile personal.config and stage it (not as root)'
+		'install:install the staged kernel as GRUB default (root)'
+		'uninstall:remove a registered personal kernel (root)'
+		'adopt:register a personal kernel installed by other means (root)'
+		'verify:check the running kernel'
+		'status:show sources, configs, kernels and GRUB default'
+	)
+	local -a common=(
+		'--dry-run[print what would change]'
+		'(- *)'{-h,--help}'[show help]'
+	)
+	_arguments -C $common '1:command:->command' '*::argument:->argument' && ret=0
+	case $state in
+	command)
+		_describe -t commands command commands && ret=0
+		;;
+	argument)
+		curcontext=${curcontext%:*:*}:personal-kernel-builder-$line[1]:
+		case $line[1] in
+		init)
+			_arguments $common \
+				'--name[kernel name: releases end in -NAME]:name:' \
+				'--builder[user who owns personal.config and builds]:user:_users' \
+				'--config[import this file as personal.config]:config file:_files' && ret=0
+			;;
+		config) _arguments '1:action:(olddefconfig menuconfig)' && ret=0 ;;
+		diff)
+			_arguments '1:target:_alternative "targets:target:(default running)" "backups:backup:_pkb_backups"' &&
+				ret=0
+			;;
+		backup) _arguments '1:action:(list)' && ret=0 ;;
+		restore) _arguments '1:backup id:_pkb_backups' && ret=0 ;;
+		build) _arguments '--jobs[parallel make jobs]:jobs:' && ret=0 ;;
+		install)
+			_arguments $common \
+				'(--no-initrd)--initrd[create an initrd]' \
+				'(--initrd)--no-initrd[boot without initrd]' \
+				'--fix-grub-uuid[set GRUB_DISABLE_LINUX_UUID=true]' && ret=0
+			;;
+		uninstall)
+			_arguments $common \
+				'(1)--keep[keep only the newest N kernels]:number:' \
+				'(--keep)1:release:_pkb_releases' && ret=0
+			;;
+		adopt) _arguments $common '1:release:_pkb_boot_releases' && ret=0 ;;
+		check | verify | status) _message 'no more arguments' ;;
+		esac
+		;;
+	esac
+	return ret
+}
+
+_personal-kernel-builder "$@"

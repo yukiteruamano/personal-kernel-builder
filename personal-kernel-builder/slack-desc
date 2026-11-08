@@ -1,0 +1,19 @@
+# HOW TO EDIT THIS FILE:
+# The "handy ruler" below makes it easier to edit a package description.
+# Line up the first '|' above the ':' following the base package name, and
+# the '|' on the right side marks the last column you can put a character in.
+# You must make exactly 11 lines for the formatting to be correct.  It's also
+# customary to leave one space after the ':' except on otherwise blank lines.
+
+                       |-----handy-ruler------------------------------------------------------|
+personal-kernel-builder: personal-kernel-builder (personal kernel build tool)
+personal-kernel-builder:
+personal-kernel-builder: Builds a personal kernel from Slackware's kernel-source with a config
+personal-kernel-builder: kept in /etc/personal-kernel-builder: compiles without root in /tmp,
+personal-kernel-builder: installs kernel and modules as root and makes it GRUB's default.
+personal-kernel-builder: Keeps dated config backups, diffs against Slackware's default
+personal-kernel-builder: config, signs modules with a fresh key per build, and can uninstall.
+personal-kernel-builder:
+personal-kernel-builder: Needs: kernel-source, grub, openssl, the kernel build toolchain.
+personal-kernel-builder:
+personal-kernel-builder:
